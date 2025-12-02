@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+
+{% block title %}View Roster - Attendance Tracker{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h3><i class="bi bi-table"></i> View and Export Roster</h3>
+        <div class="btn-group">
+            <a href="/download_roster" class="btn btn-success">
+                <i class="bi bi-download"></i> Download Roster
+            </a>
+            {% if date_columns %}
+            <div class="btn-group">
+                <button type="button" class="btn btn-warning dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="bi bi-gear"></i> Manage Date Columns
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li><h6 class="dropdown-header">Delete Date Column</h6></li>
+                    {% for date_col in date_columns %}
+                    <li>
+                        <a class="dropdown-item text-danger delete-column-link" href="#" data-column-name="{{ date_col }}">
+                            <i class="bi bi-trash"></i> Delete {{ date_col }}
+                        </a>
+                    </li>
+                    {% endfor %}
+                    <li><hr class="dropdown-divider"></li>
+                    <li><span class="dropdown-item-text text-muted small">{{ date_columns|length }} date column(s) found</span></li>
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    <div class="card-body">
+        <!-- Toolbar -->
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+                {% if date_columns %}
+                <span class="badge bg-info">
+                    <i class="bi bi-calendar-check"></i> {{ date_columns|length }} meeting(s) recorded
+                </span>
+                <div class="mt-2">
+                    <small class="text-muted">Date columns: </small>
+                    {% for date_col in date_columns %}
+                    <span class="badge bg-secondary me-1">{{ date_col }}</span>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="alert alert-warning mb-0">
+                    <i class="bi bi-exclamation-triangle"></i> No attendance date columns found in the roster.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <h5>Roster with Total Points</h5>
+        <div class="table-responsive" style="max-height: 600px; overflow-y: auto;">
+            {{ roster_html|safe }}
+        </div>
+        <style>
+            .table-bordered {
+                border: 2px solid #dee2e6 !important;
+            }
+            .table-bordered th,
+            .table-bordered td {
+                border: 1px solid #dee2e6 !important;
+                padding: 8px !important;
+            }
+            .table-bordered thead th {
+                border-bottom-width: 2px !important;
+                background-color: #f8f9fa;
+                font-weight: 600;
+            }
+            .table-bordered tbody tr:hover {
+                background-color: #f5f5f5;
+            }
+        </style>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1" aria-labelledby="deleteModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title" id="deleteModalLabel">
+                    <i class="bi bi-exclamation-triangle"></i> Confirm Deletion
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-danger">
+                    <strong>Warning:</strong> This action cannot be undone!
+                </div>
+                <p>Are you sure you want to delete the date column:</p>
+                <p class="fs-5 fw-bold text-center" id="deleteColumnName"></p>
+                <p class="text-danger">
+                    <i class="bi bi-info-circle"></i> This will permanently delete <strong>all attendance data</strong> for this date column for all students.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="bi bi-x-circle"></i> Cancel
+                </button>
+                <form id="deleteForm" method="POST" action="/delete_date_column" style="display: inline;">
+                    <input type="hidden" name="date_column" id="deleteColumnInput">
+                    <button type="submit" class="btn btn-danger">
+                        <i class="bi bi-trash"></i> Delete Column
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Handle clicks on delete column links using event delegation
+    document.addEventListener('click', function(e) {
+        if (e.target.closest('.delete-column-link')) {
+            e.preventDefault();
+            var link = e.target.closest('.delete-column-link');
+            var columnName = link.getAttribute('data-column-name');
+            if (columnName) {
+                confirmDeleteColumn(columnName);
+            }
+        }
+    });
+    
+    // Function to show delete confirmation modal
+    function confirmDeleteColumn(columnName) {
+        console.log('Deleting column:', columnName); // Debug log
+        
+        // Set the column name in the modal
+        var columnNameElement = document.getElementById('deleteColumnName');
+        var columnInputElement = document.getElementById('deleteColumnInput');
+        
+        if (columnNameElement) {
+            columnNameElement.textContent = columnName;
+        }
+        if (columnInputElement) {
+            columnInputElement.value = columnName;
+        }
+        
+        // Show the modal
+        var deleteModalElement = document.getElementById('deleteModal');
+        if (deleteModalElement) {
+            var deleteModal = new bootstrap.Modal(deleteModalElement);
+            deleteModal.show();
+        } else {
+            console.error('Delete modal element not found');
+        }
+    }
+    
+    // Make function globally available
+    window.confirmDeleteColumn = confirmDeleteColumn;
+    
+    // Handle form submission
+    var deleteForm = document.getElementById('deleteForm');
+    if (deleteForm) {
+        deleteForm.addEventListener('submit', function(e) {
+            // Verify column name is set
+            var columnInput = document.getElementById('deleteColumnInput');
+            if (!columnInput || !columnInput.value) {
+                e.preventDefault();
+                alert('Error: No column selected for deletion.');
+                return false;
+            }
+            console.log('Submitting delete form for column:', columnInput.value); // Debug log
+            // Form will submit normally
+            return true;
+        });
+    }
+});
+</script>
+{% endblock %}

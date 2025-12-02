@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Zoom Attendance - Attendance Tracker{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h3><i class="bi bi-camera-video"></i> Zoom Meeting Attendance Processing</h3>
+    </div>
+    <div class="card-body">
+        <h5>Upload Zoom Attendance Report</h5>
+        <form method="POST" action="/process_zoom" enctype="multipart/form-data">
+            <div class="mb-3">
+                <label class="form-label">Upload Zoom Attendance Excel File</label>
+                <input type="file" class="form-control" name="zoom_file" accept=".xlsx,.xls,.csv" required>
+                <small class="form-text text-muted">Upload the Zoom meeting report with participant names and durations</small>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Meeting Date (Optional)</label>
+                <input type="date" class="form-control" name="meeting_date" 
+                       value="{{ session.get('meeting_date', '') }}">
+                <small class="form-text text-muted">If left blank, the app will automatically detect the meeting date from the Zoom file (from date columns or meeting start time).</small>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Cut Time (minutes)</label>
+                <input type="number" class="form-control" name="cut_time" 
+                       value="{{ session.get('cut_time', 30) }}" min="1" step="1" required>
+                <small class="form-text text-muted">Duration threshold in minutes. Students who stayed ≥ cut time get 0.6 points, those who stayed &lt; cut time get 0.2 points.</small>
+            </div>
+            <button type="submit" class="btn btn-primary">Process Zoom Attendance</button>
+        </form>
+
+        <div class="alert alert-info mt-4">
+            <strong>Points System:</strong><br>
+            • Duration ≥ cut time: <strong>0.6 points</strong><br>
+            • Duration &lt; cut time (but &gt; 0): <strong>0.2 points</strong><br>
+            • No attendance (0 minutes): <strong>0.0 points</strong>
+        </div>
+    </div>
+</div>
+{% endblock %}

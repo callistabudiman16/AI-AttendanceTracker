@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}Check-In - Attendance Tracker{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h3><i class="bi bi-qr-code-scan"></i> In-Person Attendance Check-In</h3>
+    </div>
+    <div class="card-body">
+        <h5>1. Generate QR Code for Students</h5>
+        <form id="qrForm" class="mb-4">
+            <div class="mb-3">
+                <label class="form-label">QR Code URL (Qualtrics check-in form)</label>
+                <input type="url" class="form-control" id="qr_url" 
+                       placeholder="https://youruniversity.qualtrics.com/your-form" required>
+                <small class="form-text text-muted">Enter your Qualtrics check-in form URL</small>
+            </div>
+            <button type="submit" class="btn btn-primary">Generate QR Code</button>
+        </form>
+        <div id="qrDisplay" class="text-center mb-4" style="display:none;">
+            <img id="qrImage" src="" alt="QR Code" class="img-fluid" style="max-width: 400px;">
+            <p class="mt-2">Display this QR code for students to scan</p>
+        </div>
+
+        <hr>
+
+        <h5>2. Configure Check-In Time Settings</h5>
+        <div class="alert alert-info">
+            <strong>Point Assignment Rules:</strong>
+            <ul class="mb-0">
+                <li><strong>Early Bird (0.6 points):</strong> Check-ins from Early Bird Start Time until Regular Start Time</li>
+                <li><strong>Regular (0.2 points):</strong> Check-ins from Regular Start Time onwards</li>
+            </ul>
+        </div>
+        <form method="POST" action="/update_checkin_settings" class="mb-4">
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label class="form-label">Early Bird Start Time (0.6 points)</label>
+                        <input type="time" class="form-control" name="early_bird_start_time" 
+                               value="{{ early_bird_start_time }}" required>
+                        <small class="form-text text-muted">Students checking in from this time get 0.6 points</small>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label class="form-label">Regular Start Time (0.2 points)</label>
+                        <input type="time" class="form-control" name="regular_start_time" 
+                               value="{{ regular_start_time }}" required>
+                        <small class="form-text text-muted">Students checking in from this time get 0.2 points</small>
+                    </div>
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">
+                <i class="bi bi-save"></i> Save Time Settings
+            </button>
+        </form>
+
+        <hr>
+
+        <h5>3. Import Check-In Data</h5>
+        <p>After students check in via Qualtrics, export the responses and import the data here:</p>
+        <div class="alert alert-warning">
+            <strong>Required Columns:</strong>
+            <ul class="mb-0">
+                <li><strong>Name:</strong> Student's name</li>
+                <li><strong>Start Date:</strong> Date and time when student checked in</li>
+            </ul>
+        </div>
+        <form method="POST" action="/process_checkin" enctype="multipart/form-data">
+            <div class="mb-3">
+                <label class="form-label">Upload Qualtrics Export File (CSV or Excel)</label>
+                <input type="file" class="form-control" name="checkin_file" accept=".csv,.xlsx,.xls" required>
+                <small class="form-text text-muted">The file should contain "Name" and "Start Date" columns</small>
+            </div>
+            <button type="submit" class="btn btn-success">
+                <i class="bi bi-upload"></i> Process Check-Ins and Update Roster
+            </button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('qrForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const url = document.getElementById('qr_url').value;
+    const formData = new FormData();
+    formData.append('qr_url', url);
+    
+    try {
+        const response = await fetch('/generate_qr', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await response.json();
+        if (data.qr_image) {
+            document.getElementById('qrImage').src = data.qr_image;
+            document.getElementById('qrDisplay').style.display = 'block';
+        } else {
+            alert('Error generating QR code');
+        }
+    } catch (error) {
+        alert('Error generating QR code: ' + error.message);
+    }
+});
+</script>
+{% endblock %}

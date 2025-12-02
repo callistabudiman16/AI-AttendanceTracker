@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}Home - Attendance Tracker{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h3><i class="bi bi-clipboard-check"></i> Attendance Tracker App</h3>
+                <small class="text-muted"></small>
+            </div>
+            <div class="card-body">
+                {% if not roster_loaded %}
+                <div class="alert alert-warning">
+                    <strong>⚠️ Please upload a roster file to get started.</strong>
+                </div>
+                {% else %}
+                <div class="alert alert-success">
+                    <strong>✅ Roster loaded!</strong> {{ roster|length if roster is not none else 0 }} students in roster.
+                </div>
+                {% endif %}
+
+                <h5>Upload Roster File</h5>
+                <form method="POST" action="/upload_roster" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <input type="file" class="form-control" name="roster_file" accept=".xlsx,.xls,.csv" required>
+                        <small class="form-text text-muted">Supports Excel (.xlsx, .xls) or CSV files</small>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Upload Roster</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h5>Settings</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="/update_settings">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Late Threshold (minutes)</label>
+                            <input type="number" class="form-control" name="late_threshold" 
+                                   value="{{ session.get('late_threshold_minutes', 15) }}" min="0">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Class Start Time</label>
+                            <input type="time" class="form-control" name="class_start_time" 
+                                   value="{{ session.get('class_start_time', '09:00') }}">
+                        </div>
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" class="form-check-input" name="use_gemini" 
+                               {% if session.get('use_gemini') %}checked{% endif %}>
+                        <label class="form-check-label">Enable Gemini API for smart name matching</label>
+                    </div>
+                    {% if session.get('use_gemini') %}
+                    <div class="mb-3">
+                        <label class="form-label">Gemini API Key</label>
+                        <input type="password" class="form-control" name="gemini_api_key" 
+                               value="{{ session.get('gemini_api_key', '') }}" 
+                               placeholder="Enter your Gemini API key">
+                        <small class="form-text text-muted">Get your free API key from: https://makersuite.google.com/app/apikey</small>
+                    </div>
+                    {% endif %}
+                    <button type="submit" class="btn btn-primary">Save Settings</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5>Quick Links</h5>
+            </div>
+            <div class="card-body">
+                <a href="/checkin" class="btn btn-primary w-100 mb-2">
+                    <i class="bi bi-qr-code-scan"></i> In-Person Check-In
+                </a>
+                <a href="/zoom" class="btn btn-success w-100 mb-2">
+                    <i class="bi bi-camera-video"></i> Zoom Attendance
+                </a>
+                <a href="/view_roster" class="btn btn-info w-100 mb-2">
+                    <i class="bi bi-table"></i> View Roster
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

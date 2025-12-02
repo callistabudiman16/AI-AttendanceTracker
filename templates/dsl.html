@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+
+{% block title %}DSL Script Executor - Attendance Tracker{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h3><i class="bi bi-code-slash"></i> Attendance Tracker DSL Executor</h3>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-info">
+                    <strong>About DSL:</strong> The Attendance Tracker DSL is a simple scripting language for automating attendance tracking operations. 
+                    Each line contains one command. See <a href="#" onclick="alert('See dsl/ATTENDANCE_DSL.md for full documentation');">documentation</a> for command reference.
+                </div>
+
+                <form method="POST" action="/execute_dsl">
+                    <div class="mb-3">
+                        <label for="script_content" class="form-label fw-bold">DSL Script:</label>
+                        <textarea class="form-control" id="script_content" name="script_content" rows="15" 
+                                  placeholder="# Enter your DSL script here&#10;# Example:&#10;LOAD ROSTER roster.xlsx&#10;PROCESS CHECKIN checkins.csv DATE 2025-11-04&#10;SAVE ROSTER">{% if request.form.get('script_content') %}{{ request.form.get('script_content') }}{% endif %}</textarea>
+                        <small class="form-text text-muted">Enter your DSL commands here. One command per line.</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-play-circle"></i> Execute Script
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="loadExample()">
+                            <i class="bi bi-file-text"></i> Load Example
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="clearScript()">
+                            <i class="bi bi-x-circle"></i> Clear
+                        </button>
+                    </div>
+                </form>
+
+                {% if session.get('dsl_last_result') %}
+                    {% set result = session.get('dsl_last_result') %}
+                    <div class="mt-4">
+                        <h5>Execution Results:</h5>
+                        {% if result.success %}
+                            <div class="alert alert-success">
+                                <strong>Success!</strong> {{ result.message }}
+                            </div>
+                            {% if result.output %}
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-bordered">
+                                        <thead>
+                                            <tr>
+                                                <th>Line</th>
+                                                <th>Command</th>
+                                                <th>Result</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for output in result.output %}
+                                            <tr>
+                                                <td>{{ output.line }}</td>
+                                                <td><code>{{ output.command }}</code></td>
+                                                <td>{{ output.result }}</td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            {% endif %}
+                        {% else %}
+                            <div class="alert alert-danger">
+                                <strong>Error:</strong> {{ result.error }}
+                                {% if result.line_num %}
+                                    <br><strong>Line {{ result.line_num }}:</strong> <code>{{ result.line }}</code>
+                                {% endif %}
+                            </div>
+                        {% endif %}
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Quick Reference Card -->
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5><i class="bi bi-info-circle"></i> Quick Reference</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>File Operations</h6>
+                        <ul class="list-unstyled">
+                            <li><code>LOAD ROSTER &lt;file&gt;</code></li>
+                            <li><code>SAVE ROSTER [&lt;file&gt;]</code></li>
+                            <li><code>DOWNLOAD ROSTER [&lt;file&gt;]</code></li>
+                        </ul>
+
+                        <h6>Check-In Processing</h6>
+                        <ul class="list-unstyled">
+                            <li><code>PROCESS CHECKIN &lt;file&gt; [DATE &lt;date&gt;]</code></li>
+                            <li><code>SET CHECKIN TIMES EARLY_BIRD &lt;time&gt; REGULAR &lt;time&gt;</code></li>
+                        </ul>
+
+                        <h6>Zoom Processing</h6>
+                        <ul class="list-unstyled">
+                            <li><code>PROCESS ZOOM &lt;file&gt; [DATE &lt;date&gt;]</code></li>
+                        </ul>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>Roster Management</h6>
+                        <ul class="list-unstyled">
+                            <li><code>VIEW ROSTER</code></li>
+                            <li><code>DELETE DATE &lt;column&gt;</code></li>
+                            <li><code>SHOW LATE STUDENTS DATE &lt;date&gt;</code></li>
+                        </ul>
+
+                        <h6>Settings</h6>
+                        <ul class="list-unstyled">
+                            <li><code>ENABLE GEMINI</code></li>
+                            <li><code>DISABLE GEMINI</code></li>
+                            <li><code>SET GEMINI KEY &lt;key&gt;</code></li>
+                        </ul>
+
+                        <h6>Utilities</h6>
+                        <ul class="list-unstyled">
+                            <li><code>ECHO &lt;message&gt;</code></li>
+                            <li><code>WAIT &lt;seconds&gt;</code></li>
+                            <li><code>GENERATE QR &lt;url&gt; [OUTPUT &lt;file&gt;]</code></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function loadExample() {
+    const example = `# Daily Check-In Processing Script
+# Load the roster
+LOAD ROSTER roster_attendance.xlsx
+
+# Set check-in time thresholds
+SET CHECKIN TIMES EARLY_BIRD 11:00 REGULAR 11:36
+
+# Process today's check-ins
+PROCESS CHECKIN "uploads/today_checkins.csv" DATE 2025-11-04
+
+# Save the updated roster
+SAVE ROSTER
+
+# View the results
+VIEW ROSTER`;
+    
+    document.getElementById('script_content').value = example;
+}
+
+function clearScript() {
+    if (confirm('Are you sure you want to clear the script?')) {
+        document.getElementById('script_content').value = '';
+    }
+}
+</script>
+{% endblock %}
+

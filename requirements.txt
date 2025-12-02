@@ -1,0 +1,11 @@
+flask>=3.0.0
+pandas>=2.0.0
+openpyxl>=3.1.0
+qrcode[pil]>=7.4.2
+opencv-python>=4.8.0
+pyzbar>=0.1.9
+Pillow>=10.0.0
+xlrd>=2.0.1
+google-generativeai>=0.3.0  # Optional: For AI-assisted name matching with Gemini API
+msal>=1.24.0  # Required: For OneDrive API integration and real-time collaboration
+requests>=2.31.0  # Required: For OneDrive API HTTP requests
