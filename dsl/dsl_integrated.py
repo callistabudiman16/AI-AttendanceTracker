@@ -66,6 +66,8 @@ class IntegratedDSLExecutor:
             'WAIT': self._cmd_wait,
             'SHOW LATE STUDENTS': self._cmd_show_late_students,
             'SHOW EARLY STUDENTS': self._cmd_show_early_students,
+            'SHOW STUDENT TOTAL': self._cmd_show_student_total,
+            'FIND STUDENT': self._cmd_show_student_total,  # Alias
         }
     
     def parse_line(self, line: str) -> Tuple[Optional[str], List[str]]:
@@ -145,6 +147,9 @@ class IntegratedDSLExecutor:
             Dictionary with execution results
         """
         self.output = []
+        # Initialize structured data attributes for commands that use them
+        self._last_student_list = None
+        self._last_header = None
         
         try:
             lines = script_content.split('\n')
@@ -158,12 +163,21 @@ class IntegratedDSLExecutor:
                 try:
                     result = self.execute_command(command, args)
                     if result:
-                        self.output.append({
+                        # Check if command stored structured student list data
+                        output_item = {
                             'line': line_num,
                             'command': command,
                             'result': result,
                             'success': True
-                        })
+                        }
+                        # Add structured data if available (from SHOW LATE/EARLY STUDENTS commands)
+                        if hasattr(self, '_last_student_list') and self._last_student_list is not None:
+                            output_item['student_list'] = self._last_student_list
+                            output_item['header'] = getattr(self, '_last_header', None)
+                            # Clear the stored data after using it
+                            self._last_student_list = None
+                            self._last_header = None
+                        self.output.append(output_item)
                 except Exception as e:
                     return {
                         'success': False,
@@ -232,14 +246,45 @@ class IntegratedDSLExecutor:
         if self.context['roster'] is None:
             raise ValueError("No roster loaded. Use LOAD ROSTER first.")
         
+        # Calculate Total Points before saving
+        df = self.context['roster'].copy()
+        date_columns = []
+        non_date_columns = ['Unnamed: 0', 'No.', 'ID', 'Name', 'Major', 'Level', 'Total Points']
+        
+        import re
+        for col in df.columns:
+            col_str = str(col).strip()
+            col_lower = col_str.lower()
+            
+            # Skip known non-date columns
+            if col_str in non_date_columns or col_lower in [c.lower() for c in non_date_columns]:
+                continue
+            
+            # Match MM.DD format (e.g., 10.23, 11.4, 1.5)
+            if re.match(r'^\d{1,2}\.\d{1,2}$', col_str):
+                date_columns.append(col)
+            # Match Month.Day format (e.g., Oct.23, Nov.4, R,Oct.23, T,Oct.21)
+            elif re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\.\d{1,2}', col_lower):
+                date_columns.append(col)
+            # Match date-like patterns with prefixes (R,Oct.23, T,Oct.21, etc.)
+            elif re.match(r'^[A-Z],(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\.\d{1,2}', col_lower):
+                date_columns.append(col)
+        
+        # Calculate Total Points from date columns
+        if date_columns:
+            numeric_date_cols = [col for col in date_columns if df[col].dtype in ['int64', 'float64']]
+            if numeric_date_cols:
+                df['Total Points'] = df[numeric_date_cols].fillna(0).sum(axis=1)
+                self.context['roster'] = df
+        
         file_path = args[0].strip('"\'') if args else None
         
         if 'save_roster' in self.app_funcs:
-            self.app_funcs['save_roster'](self.context['roster'])
+            self.app_funcs['save_roster'](df)
             return f"Roster saved successfully"
         
         if file_path:
-            self.context['roster'].to_excel(file_path, index=False, engine='openpyxl')
+            df.to_excel(file_path, index=False, engine='openpyxl')
             return f"Roster saved to {file_path}"
         else:
             raise ValueError("No file path specified and save_roster function not available")
@@ -451,29 +496,100 @@ class IntegratedDSLExecutor:
         
         # Try to find the matching date column
         date_col = None
-        if 'find_matching_date_column' in self.app_funcs:
+        
+        # First, try exact column name match (handles formats like "T,Nov.4", "R,Oct.23", etc.)
+        if date_str in df.columns:
+            date_col = date_str
+        else:
+            # Try case-insensitive exact match
+            for col in df.columns:
+                if str(col).strip().lower() == date_str.strip().lower():
+                    date_col = col
+                    break
+        
+        # If not found, try using find_matching_date_column function
+        if not date_col and 'find_matching_date_column' in self.app_funcs:
             try:
-                # Parse date string
-                meeting_date = datetime.fromisoformat(date_str) if '-' in date_str else datetime.strptime(date_str, '%m/%d/%Y')
-                date_col = self.app_funcs['find_matching_date_column'](df, meeting_date)
-            except:
+                # Try to parse date string in various formats
+                meeting_date = None
+                # Try ISO format first (YYYY-MM-DD)
+                if '-' in date_str and len(date_str.split('-')) == 3:
+                    try:
+                        meeting_date = datetime.strptime(date_str, '%Y-%m-%d')
+                    except:
+                        pass
+                # Try MM/DD/YYYY format
+                if not meeting_date and '/' in date_str:
+                    try:
+                        meeting_date = datetime.strptime(date_str, '%m/%d/%Y')
+                    except:
+                        pass
+                # Try MM.DD format (e.g., "11.4")
+                if not meeting_date and '.' in date_str and len(date_str.split('.')) == 2:
+                    try:
+                        parts = date_str.split('.')
+                        month, day = int(parts[0]), int(parts[1])
+                        meeting_date = datetime(2024, month, day)  # Use 2024 as default year
+                    except:
+                        pass
+                
+                if meeting_date:
+                    date_col = self.app_funcs['find_matching_date_column'](df, meeting_date)
+            except Exception as e:
                 pass
         
-        # If no matching column found, try direct column name match
+        # If still not found, try pattern matching for date-like column names
+        # This handles formats like "T,Nov.4", "R,Oct.23", "Nov.4", etc.
         if not date_col:
-            # Try various date formats
-            possible_names = [
-                date_str,
-                date_str.replace('-', '.').replace('/', '.'),
-            ]
-            for col in df.columns:
-                col_str = str(col)
-                for possible in possible_names:
-                    if possible.lower() in col_str.lower() or col_str.lower() in possible.lower():
-                        date_col = col
-                        break
-                if date_col:
-                    break
+            date_str_lower = date_str.lower().strip()
+            import re
+            
+            # Extract month and day from date string if possible
+            # Patterns: "T,Nov.4", "R,Oct.23", "Nov.4", "11.4", etc.
+            month_day_pattern = re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\.(\d{1,2})', date_str_lower)
+            if month_day_pattern:
+                # Found month.day pattern (e.g., "nov.4")
+                month_day_str = month_day_pattern.group(0)  # e.g., "nov.4"
+                # Also check if there's a prefix like "T," or "R,"
+                prefix_pattern = re.match(r'^([A-Z]),', date_str)
+                prefix = prefix_pattern.group(1) if prefix_pattern else None
+                
+                # Match columns that contain this exact month.day pattern
+                for col in df.columns:
+                    col_str = str(col).lower().strip()
+                    # Check if column contains the same month.day pattern
+                    if month_day_str in col_str:
+                        # If there's a prefix in the date string, prefer columns with the same prefix
+                        if prefix:
+                            col_prefix_match = re.match(r'^([a-z]),', col_str)
+                            if col_prefix_match and col_prefix_match.group(1).upper() == prefix:
+                                date_col = col
+                                break
+                        # If no prefix or prefix doesn't match, still accept if month.day matches
+                        if not date_col:
+                            date_col = col
+            else:
+                # Try numeric format like "11.4"
+                numeric_pattern = re.match(r'^(\d{1,2})\.(\d{1,2})$', date_str)
+                if numeric_pattern:
+                    month, day = numeric_pattern.groups()
+                    # Check for prefix
+                    prefix_pattern = re.match(r'^([A-Z]),', date_str)
+                    prefix = prefix_pattern.group(1) if prefix_pattern else None
+                    
+                    for col in df.columns:
+                        col_str = str(col).lower().strip()
+                        # Match columns like "11.4" or "T,11.4"
+                        if f"{month}.{day}" in col_str:
+                            # If there's a prefix, prefer columns with the same prefix
+                            if prefix:
+                                col_prefix_match = re.match(r'^([a-z]),', col_str)
+                                if col_prefix_match and col_prefix_match.group(1).upper() == prefix:
+                                    date_col = col
+                                    break
+                            # If no prefix or prefix doesn't match, still accept if numeric pattern matches
+                            if not date_col:
+                                date_col = col
         
         if not date_col or date_col not in df.columns:
             raise ValueError(f"Date column not found for date: {date_str}")
@@ -513,19 +629,14 @@ class IntegratedDSLExecutor:
         if not late_students:
             return f"No late students found for date {date_str} (date column: {date_col})"
         
-        # Format the result
-        result_lines = [f"Late students for {date_str} ({len(late_students)} students):"]
-        for i, name in enumerate(late_students, 1):
-            result_lines.append(f"  {i}. {name}")
+        # Format the result with structured data for better display
+        result_header = f"Late students for {date_str} ({len(late_students)} students):"
+        result_text = result_header + '\n' + '\n'.join([f"  {i}. {name}" for i, name in enumerate(late_students, 1)])
         
-        # Also add to output for display
-        result_text = '\n'.join(result_lines)
-        self.output.append({
-            'line': 0,
-            'command': 'SHOW LATE STUDENTS',
-            'result': result_text,
-            'success': True
-        })
+        # Store structured data for later use in execute_script
+        # The execute_script will add this to output, so we store it as an attribute
+        self._last_student_list = late_students
+        self._last_header = result_header
         
         return result_text
     
@@ -554,30 +665,102 @@ class IntegratedDSLExecutor:
         
         df = self.context['roster']
         
-        # Try to find the matching date column using app helper if available
+        # Try to find the matching date column
         date_col = None
-        if 'find_matching_date_column' in self.app_funcs:
+        
+        # First, try exact column name match (handles formats like "T,Nov.4", "R,Oct.23", etc.)
+        if date_str in df.columns:
+            date_col = date_str
+        else:
+            # Try case-insensitive exact match
+            for col in df.columns:
+                if str(col).strip().lower() == date_str.strip().lower():
+                    date_col = col
+                    break
+        
+        # If not found, try using find_matching_date_column function
+        if not date_col and 'find_matching_date_column' in self.app_funcs:
             try:
-                # Parse date string if it's in a date format
-                meeting_date = datetime.fromisoformat(date_str) if '-' in date_str else datetime.strptime(date_str, '%m/%d/%Y')
-                date_col = self.app_funcs['find_matching_date_column'](df, meeting_date)
-            except:
+                # Try to parse date string in various formats
+                meeting_date = None
+                # Try ISO format first (YYYY-MM-DD)
+                if '-' in date_str and len(date_str.split('-')) == 3:
+                    try:
+                        meeting_date = datetime.strptime(date_str, '%Y-%m-%d')
+                    except:
+                        pass
+                # Try MM/DD/YYYY format
+                if not meeting_date and '/' in date_str:
+                    try:
+                        meeting_date = datetime.strptime(date_str, '%m/%d/%Y')
+                    except:
+                        pass
+                # Try MM.DD format (e.g., "11.4")
+                if not meeting_date and '.' in date_str and len(date_str.split('.')) == 2:
+                    try:
+                        parts = date_str.split('.')
+                        month, day = int(parts[0]), int(parts[1])
+                        meeting_date = datetime(2024, month, day)  # Use 2024 as default year
+                    except:
+                        pass
+                
+                if meeting_date:
+                    date_col = self.app_funcs['find_matching_date_column'](df, meeting_date)
+            except Exception as e:
                 pass
         
-        # If no matching column found, try direct column name match
+        # If still not found, try pattern matching for date-like column names
+        # This handles formats like "T,Nov.4", "R,Oct.23", "Nov.4", etc.
         if not date_col:
-            possible_names = [
-                date_str,
-                date_str.replace('-', '.').replace('/', '.'),
-            ]
-            for col in df.columns:
-                col_str = str(col)
-                for possible in possible_names:
-                    if possible.lower() in col_str.lower() or col_str.lower() in possible.lower():
-                        date_col = col
-                        break
-                if date_col:
-                    break
+            date_str_lower = date_str.lower().strip()
+            import re
+            
+            # Extract month and day from date string if possible
+            # Patterns: "T,Nov.4", "R,Oct.23", "Nov.4", "11.4", etc.
+            month_day_pattern = re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\.(\d{1,2})', date_str_lower)
+            if month_day_pattern:
+                # Found month.day pattern (e.g., "nov.4")
+                month_day_str = month_day_pattern.group(0)  # e.g., "nov.4"
+                # Also check if there's a prefix like "T," or "R,"
+                prefix_pattern = re.match(r'^([A-Z]),', date_str)
+                prefix = prefix_pattern.group(1) if prefix_pattern else None
+                
+                # Match columns that contain this exact month.day pattern
+                for col in df.columns:
+                    col_str = str(col).lower().strip()
+                    # Check if column contains the same month.day pattern
+                    if month_day_str in col_str:
+                        # If there's a prefix in the date string, prefer columns with the same prefix
+                        if prefix:
+                            col_prefix_match = re.match(r'^([a-z]),', col_str)
+                            if col_prefix_match and col_prefix_match.group(1).upper() == prefix:
+                                date_col = col
+                                break
+                        # If no prefix or prefix doesn't match, still accept if month.day matches
+                        if not date_col:
+                            date_col = col
+            else:
+                # Try numeric format like "11.4"
+                numeric_pattern = re.match(r'^(\d{1,2})\.(\d{1,2})$', date_str)
+                if numeric_pattern:
+                    month, day = numeric_pattern.groups()
+                    # Check for prefix
+                    prefix_pattern = re.match(r'^([A-Z]),', date_str)
+                    prefix = prefix_pattern.group(1) if prefix_pattern else None
+                    
+                    for col in df.columns:
+                        col_str = str(col).lower().strip()
+                        # Match columns like "11.4" or "T,11.4"
+                        if f"{month}.{day}" in col_str:
+                            # If there's a prefix, prefer columns with the same prefix
+                            if prefix:
+                                col_prefix_match = re.match(r'^([a-z]),', col_str)
+                                if col_prefix_match and col_prefix_match.group(1).upper() == prefix:
+                                    date_col = col
+                                    break
+                            # If no prefix or prefix doesn't match, still accept if numeric pattern matches
+                            if not date_col:
+                                date_col = col
         
         if not date_col or date_col not in df.columns:
             raise ValueError(f"Date column not found for date: {date_str}")
@@ -616,20 +799,133 @@ class IntegratedDSLExecutor:
         if not early_students:
             return f"No early/on-time students found for date {date_str} (date column: {date_col})"
         
-        # Format the result
-        result_lines = [f"Early/on-time students for {date_str} ({len(early_students)} students):"]
-        for i, name in enumerate(early_students, 1):
-            result_lines.append(f"  {i}. {name}")
+        # Format the result with structured data for better display
+        result_header = f"Early/on-time students for {date_str} ({len(early_students)} students):"
+        result_text = result_header + '\n' + '\n'.join([f"  {i}. {name}" for i, name in enumerate(early_students, 1)])
         
-        result_text = '\n'.join(result_lines)
+        # Store structured data for later use in execute_script
+        # The execute_script will add this to output, so we store it as an attribute
+        self._last_student_list = early_students
+        self._last_header = result_header
         
-        # Also add to output for display
-        self.output.append({
-            'line': 0,
-            'command': 'SHOW EARLY STUDENTS',
-            'result': result_text,
-            'success': True
-        })
+        return result_text
+    
+    def _cmd_show_student_total(self, args: List[str]) -> str:
+        """SHOW STUDENT TOTAL command - shows total points for a specific student"""
+        if self.context['roster'] is None and 'load_roster' in self.app_funcs:
+            self.context['roster'] = self.app_funcs['load_roster']()
+        
+        if self.context['roster'] is None:
+            raise ValueError("No roster loaded. Use LOAD ROSTER first.")
+        
+        if not args:
+            raise ValueError("SHOW STUDENT TOTAL requires a student name")
+        
+        # Get student name (may be quoted)
+        student_name = ' '.join(args).strip('"\'')
+        
+        df = self.context['roster']
+        
+        # Find name column
+        name_col = None
+        for col in df.columns:
+            col_str = str(col).lower().strip()
+            if ('name' in col_str and 'unnamed' not in col_str and 
+                col_str not in ['id', 'email', 'major', 'level']):
+                name_col = col
+                break
+        if name_col is None:
+            if len(df.columns) > 2:
+                name_col = df.columns[2]
+            else:
+                name_col = df.columns[0] if len(df.columns) > 0 else None
+        
+        if name_col is None:
+            raise ValueError("Could not find name column in roster")
+        
+        # Try to find student using app function if available
+        student_idx = None
+        matched_name = None
+        
+        if 'find_student_in_roster' in self.app_funcs:
+            try:
+                # Import find_student_in_roster from app if available
+                from app import find_student_in_roster
+                use_gemini = self.context.get('settings', {}).get('use_gemini', False)
+                idx, confidence, matched = find_student_in_roster(student_name, df, use_gemini=use_gemini)
+                if idx is not None:
+                    student_idx = idx
+                    matched_name = matched
+            except ImportError:
+                pass
+        
+        # If not found via app function, try simple matching
+        if student_idx is None:
+            # Try exact match first (case-insensitive)
+            student_name_lower = student_name.lower().strip()
+            for idx, row in df.iterrows():
+                roster_name = str(row[name_col]).strip()
+                if roster_name.lower() == student_name_lower:
+                    student_idx = idx
+                    matched_name = roster_name
+                    break
+            
+            # Try partial match (contains)
+            if student_idx is None:
+                for idx, row in df.iterrows():
+                    roster_name = str(row[name_col]).strip()
+                    roster_name_lower = roster_name.lower()
+                    # Check if student name is contained in roster name or vice versa
+                    if (student_name_lower in roster_name_lower or 
+                        roster_name_lower in student_name_lower):
+                        student_idx = idx
+                        matched_name = roster_name
+                        break
+        
+        if student_idx is None:
+            return f"Student '{student_name}' not found in roster"
+        
+        # Get total points
+        total_points = 0.0
+        if 'Total Points' in df.columns:
+            total_val = df.loc[student_idx, 'Total Points']
+            if pd.notna(total_val):
+                try:
+                    total_points = float(total_val)
+                except (ValueError, TypeError):
+                    total_points = 0.0
+        
+        # If Total Points column doesn't exist or is empty, calculate from date columns
+        if total_points == 0.0 or 'Total Points' not in df.columns:
+            # Find date columns and sum them
+            date_columns = []
+            non_date_columns = ['Unnamed: 0', 'No.', 'ID', 'Name', 'Major', 'Level', 'Total Points']
+            
+            for col in df.columns:
+                col_str = str(col).strip()
+                col_lower = col_str.lower()
+                
+                if col_str in non_date_columns or col_lower in [c.lower() for c in non_date_columns]:
+                    continue
+                
+                # Match MM.DD format or Month.Day format
+                import re
+                if (re.match(r'^\d{1,2}\.\d{1,2}$', col_str) or
+                    re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\.\d{1,2}', col_lower) or
+                    re.match(r'^[A-Z],(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\.\d{1,2}', col_lower)):
+                    date_columns.append(col)
+            
+            # Sum date columns
+            for col in date_columns:
+                val = df.loc[student_idx, col]
+                if pd.notna(val):
+                    try:
+                        total_points += float(val)
+                    except (ValueError, TypeError):
+                        pass
+        
+        # Format result
+        result_text = f"Student: {matched_name}\nTotal Points: {total_points:.1f}"
         
         return result_text
     

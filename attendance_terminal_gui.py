@@ -134,6 +134,39 @@ class AttendanceTrackerGUI:
             return False
         
         import time
+        import re
+        
+        # Calculate Total Points column before saving
+        # Find all date columns (MM.DD format or Month.Day format)
+        date_columns = []
+        non_date_columns = ['Unnamed: 0', 'No.', 'ID', 'Name', 'Major', 'Level', 'Total Points']
+        
+        for col in df.columns:
+            col_str = str(col).strip()
+            col_lower = col_str.lower()
+            
+            # Skip known non-date columns
+            if col_str in non_date_columns or col_lower in [c.lower() for c in non_date_columns]:
+                continue
+            
+            # Match MM.DD format (e.g., 10.23, 11.4, 1.5)
+            if re.match(r'^\d{1,2}\.\d{1,2}$', col_str):
+                date_columns.append(col)
+            # Match Month.Day format (e.g., Oct.23, Nov.4, R,Oct.23, T,Oct.21)
+            elif re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\.\d{1,2}', col_lower):
+                date_columns.append(col)
+            # Match date-like patterns with prefixes (R,Oct.23, T,Oct.21, etc.)
+            elif re.match(r'^[A-Z],(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\.\d{1,2}', col_lower):
+                date_columns.append(col)
+        
+        # Calculate Total Points from date columns
+        if date_columns:
+            # Only sum numeric date columns (excluding non-date columns)
+            numeric_date_cols = [col for col in date_columns if df[col].dtype in ['int64', 'float64']]
+            if numeric_date_cols:
+                # Calculate total points, replacing NaN with 0 for calculation
+                df['Total Points'] = df[numeric_date_cols].fillna(0).sum(axis=1)
+                self.log(f"Calculated Total Points for {len(df)} students from {len(numeric_date_cols)} date columns", "info")
         
         # Try saving with retry logic
         max_retries = 3

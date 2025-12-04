@@ -171,7 +171,9 @@ COMMON REQUESTS AND THEIR DSL EQUIVALENTS:
 - "Delete date column" → DELETE DATE [column_name]
 - "Process check-in" → PROCESS CHECKIN [file] DATE [date]
 - "Show attendance for [date]" → View roster or filter by date column
-- "Find student [name]" → Use VIEW ROSTER or appropriate search commands
+- "Find student [name]" → SHOW STUDENT TOTAL [name] or FIND STUDENT [name]
+- "Show total points for [student name]" → SHOW STUDENT TOTAL [name]
+- "What are [student name]'s total points?" → SHOW STUDENT TOTAL [name]
 
 DATE FORMAT MATCHING:
 - Date columns in roster use formats like: "T,Nov.4", "R,Oct.23", "Nov.4", "10.23"

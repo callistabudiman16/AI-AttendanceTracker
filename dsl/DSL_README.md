@@ -60,6 +60,10 @@ python dsl_executor.py examples/daily_checkin.dsl
 |---------|-------------|---------|
 | `VIEW ROSTER` | Displays current roster | `VIEW ROSTER` |
 | `DELETE DATE <column>` | Deletes a date column | `DELETE DATE "R,Oct.23"` |
+| `SHOW LATE STUDENTS DATE <date>` | Shows students who got 0.2 points (late) for a date | `SHOW LATE STUDENTS DATE 11.4` |
+| `SHOW EARLY STUDENTS DATE <date>` | Shows students who got 0.6 points (on-time/early) for a date | `SHOW EARLY STUDENTS DATE "T,Nov.4"` |
+| `SHOW STUDENT TOTAL <name>` | Shows total attendance points for a specific student | `SHOW STUDENT TOTAL "Marco Acosta"` |
+| `FIND STUDENT <name>` | Alias for SHOW STUDENT TOTAL | `FIND STUDENT "Marco Acosta"` |
 
 ### Settings
 

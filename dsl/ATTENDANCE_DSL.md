@@ -101,6 +101,16 @@ Shows the names of students who were on-time/early (received 0.6 points) for a g
 - **Example:** `SHOW EARLY STUDENTS DATE 11.4`
 - **Returns:** A numbered list of student names who received 0.6 points for that date
 
+#### `SHOW STUDENT TOTAL <student_name>` or `FIND STUDENT <student_name>`
+Shows the total attendance points for a specific student by searching the roster.
+- **Arguments:**
+  - `student_name`: Student's name (can be in various formats: "Last, First", "First Last", etc.)
+- **Example:** `SHOW STUDENT TOTAL "Marco Acosta"`
+- **Example:** `SHOW STUDENT TOTAL Acosta, Marco`
+- **Example:** `FIND STUDENT "Marco Acosta"`
+- **Returns:** The student's name (as found in roster) and their total attendance points
+- **Note:** The command searches the roster using flexible name matching, so it handles name format variations and partial matches.
+
 ---
 
 ### Settings

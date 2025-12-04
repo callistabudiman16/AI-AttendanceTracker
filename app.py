@@ -610,6 +610,38 @@ def save_roster(roster_df):
     print(f"Roster DataFrame shape: {roster_df.shape}")
     print(f"Roster columns: {list(roster_df.columns)}")
     
+    # Calculate Total Points column before saving
+    # Find all date columns (MM.DD format or Month.Day format)
+    date_columns = []
+    non_date_columns = ['Unnamed: 0', 'No.', 'ID', 'Name', 'Major', 'Level', 'Total Points']
+    
+    for col in roster_df.columns:
+        col_str = str(col).strip()
+        col_lower = col_str.lower()
+        
+        # Skip known non-date columns
+        if col_str in non_date_columns or col_lower in [c.lower() for c in non_date_columns]:
+            continue
+        
+        # Match MM.DD format (e.g., 10.23, 11.4, 1.5)
+        if re.match(r'^\d{1,2}\.\d{1,2}$', col_str):
+            date_columns.append(col)
+        # Match Month.Day format (e.g., Oct.23, Nov.4, R,Oct.23, T,Oct.21)
+        elif re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\.\d{1,2}', col_lower):
+            date_columns.append(col)
+        # Match date-like patterns with prefixes (R,Oct.23, T,Oct.21, etc.)
+        elif re.match(r'^[A-Z],(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\.\d{1,2}', col_lower):
+            date_columns.append(col)
+    
+    # Calculate Total Points from date columns
+    if date_columns:
+        # Only sum numeric date columns (excluding non-date columns)
+        numeric_date_cols = [col for col in date_columns if roster_df[col].dtype in ['int64', 'float64']]
+        if numeric_date_cols:
+            # Calculate total points, replacing NaN with 0 for calculation
+            roster_df['Total Points'] = roster_df[numeric_date_cols].fillna(0).sum(axis=1)
+            print(f"Calculated Total Points for {len(roster_df)} students from {len(numeric_date_cols)} date columns")
+    
     # Check if file exists and is potentially locked
     if os.path.exists(roster_file):
         # Try to check if file is locked (Windows)
@@ -1915,6 +1947,34 @@ def download_roster():
         flash('No roster available', 'error')
         return redirect(url_for('index'))
     
+    # Calculate Total Points before downloading
+    date_columns = []
+    non_date_columns = ['Unnamed: 0', 'No.', 'ID', 'Name', 'Major', 'Level', 'Total Points']
+    
+    for col in roster_df.columns:
+        col_str = str(col).strip()
+        col_lower = col_str.lower()
+        
+        # Skip known non-date columns
+        if col_str in non_date_columns or col_lower in [c.lower() for c in non_date_columns]:
+            continue
+        
+        # Match MM.DD format (e.g., 10.23, 11.4, 1.5)
+        if re.match(r'^\d{1,2}\.\d{1,2}$', col_str):
+            date_columns.append(col)
+        # Match Month.Day format (e.g., Oct.23, Nov.4, R,Oct.23, T,Oct.21)
+        elif re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\.\d{1,2}', col_lower):
+            date_columns.append(col)
+        # Match date-like patterns with prefixes (R,Oct.23, T,Oct.21, etc.)
+        elif re.match(r'^[A-Z],(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\.\d{1,2}', col_lower):
+            date_columns.append(col)
+    
+    # Calculate Total Points from date columns
+    if date_columns:
+        numeric_date_cols = [col for col in date_columns if roster_df[col].dtype in ['int64', 'float64']]
+        if numeric_date_cols:
+            roster_df['Total Points'] = roster_df[numeric_date_cols].fillna(0).sum(axis=1)
+    
     output = io.BytesIO()
     roster_df.to_excel(output, index=False, engine='openpyxl')
     output.seek(0)
@@ -1967,6 +2027,7 @@ def execute_dsl():
             'save_roster': save_roster,
             'format_date_for_roster': format_date_for_roster,
             'find_matching_date_column': find_matching_date_column,
+            'find_student_in_roster': find_student_in_roster,
         }
         
         executor = IntegratedDSLExecutor(app_functions, session_obj=session)
@@ -2137,6 +2198,120 @@ def api_execute_dsl():
         return jsonify(result)
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/query')
+def query():
+    """Query/View Information page"""
+    init_session()
+    roster_df = load_roster()
+    query_result = session.get('query_result')
+    # Clear query result from session after retrieving it (so it doesn't persist)
+    if query_result:
+        session.pop('query_result', None)
+    return render_template('query.html', 
+                         roster=roster_df, 
+                         roster_loaded=roster_df is not None,
+                         query_result=query_result)
+
+@app.route('/query', methods=['POST'])
+def process_query():
+    """Process natural language query"""
+    init_session()
+    roster_df = load_roster()
+    if roster_df is None:
+        flash('Please upload a roster file first', 'warning')
+        return redirect(url_for('index'))
+    
+    user_query = request.form.get('user_query', '').strip()
+    if not user_query:
+        flash('Please enter a query', 'error')
+        return redirect(url_for('query'))
+    
+    try:
+        # Get Gemini API key
+        api_key = session.get('gemini_api_key') or os.getenv('GEMINI_API_KEY') or os.getenv('AIzaSyAcR924DTqb4X30QpoM98eqJ3q5IQCXtEQ')
+        if not api_key:
+            flash('Gemini API key not configured. Please set it in Settings.', 'error')
+            return redirect(url_for('query'))
+        
+        genai.configure(api_key=api_key)
+        
+        # Try newer models first, fallback to older ones
+        try:
+            model = genai.GenerativeModel('gemini-2.0-flash')
+        except:
+            try:
+                model = genai.GenerativeModel('gemini-2.5-pro')
+            except:
+                model = genai.GenerativeModel('gemini-pro')
+        
+        # Prepare context
+        roster_info = f"Roster has {len(roster_df)} students"
+        date_columns = [str(col) for col in roster_df.columns 
+                       if any(x in str(col).lower() for x in ['nov', 'oct', 'dec', 'jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', '.'])]
+        
+        # Create prompt
+        try:
+            from dsl.gemini_prompts import create_query_prompt
+            prompt = create_query_prompt(
+                user_query=user_query,
+                roster_info=roster_info,
+                date_columns=date_columns,
+                roster_file=app.config['ROSTER_FILE']
+            )
+        except ImportError:
+            prompt = f"User request: {user_query}\nGenerate DSL code to fulfill this request."
+        
+        # Generate DSL code
+        response = model.generate_content(prompt)
+        dsl_code = extract_clean_dsl_code(response.text)
+        
+        if not dsl_code:
+            flash('Could not generate DSL code from query. Please try rephrasing your question.', 'error')
+            return redirect(url_for('query'))
+        
+        # Execute the DSL code
+        try:
+            from dsl.dsl_integrated import IntegratedDSLExecutor
+            
+            app_functions = {
+                'load_roster': load_roster,
+                'save_roster': save_roster,
+                'format_date_for_roster': format_date_for_roster,
+                'find_matching_date_column': find_matching_date_column,
+                'find_student_in_roster': find_student_in_roster,
+            }
+            
+            executor = IntegratedDSLExecutor(app_functions, session_obj=session)
+            result = executor.execute_script(dsl_code)
+            
+            # Store result in session
+            result['dsl_code'] = dsl_code
+            session['query_result'] = result
+            
+            if result['success']:
+                flash(f'Query processed successfully: {result.get("message", "Done")}', 'success')
+            else:
+                flash(f'Error processing query: {result.get("error", "Unknown error")}', 'error')
+        except Exception as e:
+            flash(f'Error executing query: {str(e)}', 'error')
+            import traceback
+            print(f"Query execution error: {traceback.format_exc()}")
+            session['query_result'] = {
+                'success': False,
+                'error': str(e),
+                'dsl_code': dsl_code
+            }
+    except Exception as e:
+        flash(f'Error processing query: {str(e)}', 'error')
+        import traceback
+        print(f"Query processing error: {traceback.format_exc()}")
+        session['query_result'] = {
+            'success': False,
+            'error': str(e)
+        }
+    
+    return redirect(url_for('query'))
 
 @app.route('/api/query', methods=['POST'])
 def api_query():

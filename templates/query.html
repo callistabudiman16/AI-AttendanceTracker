@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+
+{% block title %}Query/View Information - Attendance Tracker{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h3><i class="bi bi-search"></i> Query/View Information</h3>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-info">
+                    <strong>How it works:</strong> Enter a natural language query about your attendance data, and the system will use AI to generate and execute the appropriate DSL commands to answer your question.
+                </div>
+
+                {% if not roster_loaded %}
+                <div class="alert alert-warning">
+                    <strong>⚠️ Please upload a roster file first.</strong> Go to <a href="/">Home</a> to upload your roster.
+                </div>
+                {% else %}
+                <form method="POST" action="/query" id="queryForm">
+                    <div class="mb-3">
+                        <label for="user_query" class="form-label fw-bold">Enter your query:</label>
+                        <textarea class="form-control" id="user_query" name="user_query" rows="3" 
+                                  placeholder="Example: 'show late students for November 4' or 'show all students who got 0.6 points on Oct.23'" required>{% if request.form.get('user_query') %}{{ request.form.get('user_query') }}{% endif %}</textarea>
+                        <small class="form-text text-muted">
+                            <strong>Example queries:</strong>
+                            <ul class="mb-0">
+                                <li>"show late students for November 4"</li>
+                                <li>"show all students who got 0.6 points on Oct.23"</li>
+                                <li>"show early students for T,Oct.21"</li>
+                                <li>"view roster"</li>
+                            </ul>
+                        </small>
+                    </div>
+
+                    <div class="mb-3">
+                        <button type="submit" class="btn btn-primary" id="submitBtn">
+                            <i class="bi bi-search"></i> Query
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="clearQuery()">
+                            <i class="bi bi-x-circle"></i> Clear
+                        </button>
+                    </div>
+                </form>
+
+                {% if query_result %}
+                    <div class="mt-4">
+                        <h5>Query Results:</h5>
+                        {% if query_result.success %}
+                            <div class="alert alert-success">
+                                <strong>Success!</strong> {{ query_result.message }}
+                            </div>
+                            {% if query_result.dsl_code %}
+                                <div class="card mb-3">
+                                    <div class="card-header">
+                                        <h6 class="mb-0">Generated DSL Code:</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <pre class="bg-light p-3 rounded"><code>{{ query_result.dsl_code }}</code></pre>
+                                    </div>
+                                </div>
+                            {% endif %}
+                            {% if query_result.output %}
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-bordered">
+                                        <thead>
+                                            <tr>
+                                                <th>Line</th>
+                                                <th>Command</th>
+                                                <th>Result</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for output in query_result.output %}
+                                            <tr>
+                                                <td>{{ output.line }}</td>
+                                                <td><code>{{ output.command }}</code></td>
+                                                <td>
+                                                    {% if output.student_list %}
+                                                        {# Display structured student list #}
+                                                        <div class="student-list-container">
+                                                            {% if output.header %}
+                                                                <strong class="d-block mb-2">{{ output.header }}</strong>
+                                                            {% elif output.result %}
+                                                                <strong class="d-block mb-2">{{ output.result.split('\n')[0] }}</strong>
+                                                            {% else %}
+                                                                <strong class="d-block mb-2">Students:</strong>
+                                                            {% endif %}
+                                                            <div class="list-group" style="max-height: 400px; overflow-y: auto;">
+                                                                {% for student in output.student_list %}
+                                                                    <div class="list-group-item">{{ student }}</div>
+                                                                {% endfor %}
+                                                            </div>
+                                                        </div>
+                                                    {% elif output.result %}
+                                                        {# Parse result to detect and format student lists #}
+                                                        {% set result_lines = output.result.split('\n') %}
+                                                        {% if result_lines|length > 1 and ('students' in output.result.lower() or 'student' in output.result.lower()) %}
+                                                            {# Likely a student list - format it nicely #}
+                                                            <div class="student-list-container">
+                                                                {% set header_shown = false %}
+                                                                <div class="list-group" style="max-height: 400px; overflow-y: auto;">
+                                                                    {% for line in result_lines %}
+                                                                        {% if line.strip() %}
+                                                                            {% if 'students' in line.lower() or 'student' in line.lower() %}
+                                                                                {% if not header_shown %}
+                                                                                    <strong class="d-block mb-2">{{ line.strip() }}</strong>
+                                                                                    {% set header_shown = true %}
+                                                                                {% endif %}
+                                                                            {% elif line.strip().startswith('  ') or '.' in line.strip() %}
+                                                                                {# Extract student name (remove numbering like "1. " or "  1. ") #}
+                                                                                {% set clean_line = line.strip() %}
+                                                                                {% if '.' in clean_line and clean_line.split('.')[0]|int(default=0) > 0 %}
+                                                                                    {# Has numbering, extract name after the number #}
+                                                                                    {% set parts = clean_line.split('.', 1) %}
+                                                                                    {% if parts|length > 1 %}
+                                                                                        <div class="list-group-item">{{ parts[1].strip() }}</div>
+                                                                                    {% else %}
+                                                                                        <div class="list-group-item">{{ clean_line }}</div>
+                                                                                    {% endif %}
+                                                                                {% else %}
+                                                                                    <div class="list-group-item">{{ clean_line }}</div>
+                                                                                {% endif %}
+                                                                            {% else %}
+                                                                                <div class="list-group-item">{{ line.strip() }}</div>
+                                                                            {% endif %}
+                                                                        {% endif %}
+                                                                    {% endfor %}
+                                                                </div>
+                                                            </div>
+                                                        {% else %}
+                                                            {# Regular result - preserve formatting #}
+                                                            <div style="white-space: pre-wrap;">{{ output.result }}</div>
+                                                        {% endif %}
+                                                    {% else %}
+                                                        <em>No result</em>
+                                                    {% endif %}
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            {% endif %}
+                        {% else %}
+                            <div class="alert alert-danger">
+                                <strong>Error:</strong> {{ query_result.error }}
+                                {% if query_result.line_num %}
+                                    <br><strong>Line {{ query_result.line_num }}:</strong> <code>{{ query_result.line }}</code>
+                                {% endif %}
+                            </div>
+                        {% endif %}
+                    </div>
+                {% endif %}
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function clearQuery() {
+    if (confirm('Are you sure you want to clear the query?')) {
+        document.getElementById('user_query').value = '';
+    }
+}
+
+// Show loading state when form is submitted
+document.getElementById('queryForm').addEventListener('submit', function() {
+    const submitBtn = document.getElementById('submitBtn');
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Processing...';
+});
+</script>
+{% endblock %}
+
